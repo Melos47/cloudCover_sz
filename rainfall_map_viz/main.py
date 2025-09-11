@@ -46,50 +46,37 @@ df = df.sort_values('month_num')
 
 
 
-# Create a pixel grid: 1 row, N months (horizontal rectangle)
-pixel_data = df['Total'].values.astype(float)
-pixel_grid = pixel_data.reshape(1, -1)
-# Make the chart a horizontal rectangle
-scale_y = 10
-scale_x = 60
-pixel_grid_big = np.kron(pixel_grid, np.ones((scale_y, scale_x)))
 
+# Create a grouped bar chart for yellow, orange, and red warnings
+fig, ax = plt.subplots(figsize=(12, 6), facecolor='white')
+month_labels = [d.replace('-', '/') for d in df['Month_EN']]
+bar_width = 0.2
+x = np.arange(len(month_labels))
 
+# Convert warning columns to numeric
+df['Yellow Warning'] = pd.to_numeric(df['Yellow Warning'], errors='coerce').fillna(0)
+df['Orange Warning'] = pd.to_numeric(df['Orange Warning'], errors='coerce').fillna(0)
+df['Red Warning'] = pd.to_numeric(df['Red Warning'], errors='coerce').fillna(0)
 
-# Make the canvas a horizontal rectangle
-fig, ax = plt.subplots(figsize=(14, 6), facecolor='#002FA7')
-# Create a custom colormap: white (low alpha) to white (full), on #002FA7 background
-from matplotlib.colors import LinearSegmentedColormap
-white_cmap = LinearSegmentedColormap.from_list('white_alpha', [(1,1,1,0.2), (1,1,1,1)], N=256)
+# Define blue shades: darkest for red, medium for orange, lightest for yellow
+color_yellow = '#7EC8E3'  # light blue
+color_orange = '#357ABD'  # medium blue
+color_red = '#002FA7'     # dark blue
 
-# Draw background
-fig.patch.set_facecolor('#002FA7')
-ax.set_facecolor('#002FA7')
+bars_yellow = ax.bar(x - bar_width, df['Yellow Warning'], width=bar_width, color=color_yellow, label='Yellow Warning')
+bars_orange = ax.bar(x, df['Orange Warning'], width=bar_width, color=color_orange, label='Orange Warning')
+bars_red = ax.bar(x + bar_width, df['Red Warning'], width=bar_width, color=color_red, label='Red Warning')
 
-
-
-
-
-im = ax.imshow(pixel_grid_big, cmap=white_cmap, vmin=0, vmax=pixel_data.max(), aspect='auto')
-
-mono_font = {'fontname': 'monospace'}
-ax.set_xticks(np.linspace(0, pixel_grid_big.shape[1]-scale_x/2, len(df['Month_EN'])))
-ax.set_xticklabels(df['Month_EN'], rotation=45, ha='right', color='white', fontsize=12, fontname='monospace')
-ax.set_yticks([])
-
-# Remove spines and ticks for a clean look
+ax.set_xlabel('Month/Year', color='#002FA7', fontsize=14, fontname='monospace', labelpad=18)
+ax.set_ylabel('Number of Warnings', color='#002FA7', fontsize=14, fontname='monospace', labelpad=10)
+ax.set_title('Monthly Rainstorm Warnings by Severity', color='#002FA7', fontsize=16, pad=20, fontname='monospace')
+ax.set_xticks(x)
+ax.set_xticklabels(month_labels, rotation=45, ha='right', fontsize=12, fontname='monospace', color='#002FA7')
+ax.tick_params(axis='y', labelsize=12, colors='#002FA7')
+for label in ax.get_yticklabels():
+	label.set_fontname('monospace')
 for spine in ax.spines.values():
 	spine.set_visible(False)
-ax.tick_params(axis='x', colors='white', labelsize=12)
-
-plt.title('Monthly Rainstorm Warnings (Pixel Art)', color='white', fontsize=16, pad=20, fontname='monospace')
-cbar = plt.colorbar(im, ax=ax, label='Total Warnings', orientation='vertical', pad=0.02)
-cbar.ax.yaxis.label.set_color('white')
-cbar.outline.set_edgecolor('white')
-cbar.ax.tick_params(colors='white', labelsize=12)
-for label in cbar.ax.get_yticklabels():
-	label.set_fontname('monospace')
+ax.legend(fontsize=12, frameon=False)
 plt.tight_layout()
 plt.show()
-
-# Placeholder for city coordinates and plotting logic
