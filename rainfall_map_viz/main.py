@@ -44,11 +44,20 @@ df['Month_EN'] = df['Month'].apply(zh_month_to_en)
 df['month_num'] = df['Month_EN'].str.extract(r'(\d+)-(\d+)').apply(lambda x: int(x[0])*12+int(x[1]) if pd.notnull(x[0]) and pd.notnull(x[1]) else 0, axis=1)
 df = df.sort_values('month_num')
 
-# Create a pixel grid: 1 row, N months (or reshape for more rows if desired)
+
+
+# Create a pixel grid: 1 row, N months (horizontal rectangle)
 pixel_data = df['Total'].values.astype(float)
 pixel_grid = pixel_data.reshape(1, -1)
+# Make the chart a horizontal rectangle
+scale_y = 10
+scale_x = 60
+pixel_grid_big = np.kron(pixel_grid, np.ones((scale_y, scale_x)))
 
-fig, ax = plt.subplots(figsize=(10, 2), facecolor='#002FA7')
+
+
+# Make the canvas a horizontal rectangle
+fig, ax = plt.subplots(figsize=(14, 6), facecolor='#002FA7')
 # Create a custom colormap: white (low alpha) to white (full), on #002FA7 background
 from matplotlib.colors import LinearSegmentedColormap
 white_cmap = LinearSegmentedColormap.from_list('white_alpha', [(1,1,1,0.2), (1,1,1,1)], N=256)
@@ -57,14 +66,14 @@ white_cmap = LinearSegmentedColormap.from_list('white_alpha', [(1,1,1,0.2), (1,1
 fig.patch.set_facecolor('#002FA7')
 ax.set_facecolor('#002FA7')
 
-# Pixelate: upscale the grid for a blocky look
-scale = 20  # pixel size multiplier
-pixel_grid_big = np.kron(pixel_grid, np.ones((scale, scale)))
+
+
 
 
 im = ax.imshow(pixel_grid_big, cmap=white_cmap, vmin=0, vmax=pixel_data.max(), aspect='auto')
+
 mono_font = {'fontname': 'monospace'}
-ax.set_xticks(np.linspace(0, pixel_grid_big.shape[1]-scale/2, len(df['Month_EN'])))
+ax.set_xticks(np.linspace(0, pixel_grid_big.shape[1]-scale_x/2, len(df['Month_EN'])))
 ax.set_xticklabels(df['Month_EN'], rotation=45, ha='right', color='white', fontsize=12, fontname='monospace')
 ax.set_yticks([])
 
