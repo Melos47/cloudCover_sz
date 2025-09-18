@@ -14,11 +14,13 @@ Requirements: `pandas`, `pygame`
 """
 
 import sys
+import os
 import random
 import math
 from io import StringIO
 import pandas as pd
 import numpy as np
+import requests
 
 try:
     import pygame
@@ -226,6 +228,8 @@ class DynamicContourLayer:
         self.detail_strength = 0.0
         self._target_detail_strength = 0.0
         self._target_gamma = self.gamma
+        # global opacity multiplier (0..1) applied on top of layer alpha
+        self.opacity_multiplier = 1.0
 
     def set_cloud_factor(self, f):
         f = max(0.0, min(1.0, float(f)))
@@ -293,7 +297,9 @@ class DynamicContourLayer:
         b = (c_center[2] + w * (c_edge[2] - c_center[2])).astype(np.uint8)
         # make edges less transparent by adding a floor to alpha; scale by eased layer alpha
         a_base = np.clip(self.edge_alpha_floor + val * self.alpha_scale, 0, 255)
-        a = (a_base * max(0.0, min(1.0, self.alpha / 200.0))).astype(np.uint8)
+        a = a_base * max(0.0, min(1.0, self.alpha / 200.0))
+        # apply global opacity multiplier
+        a = np.clip(a * float(self.opacity_multiplier), 0, 255).astype(np.uint8)
         rgba = np.dstack((r, g, b, a))
         # blit to small surface
         # create surface from buffer for speed
@@ -395,12 +401,60 @@ class DynamicContourLayer:
         if not self._contour_lines:
             return
         overlay = pygame.Surface((self.w, self.h), pygame.SRCALPHA)
-        col = (color[0], color[1], color[2], max(10, min(255, alpha)))
+        adj_alpha = int(max(10, min(255, alpha)) * float(self.opacity_multiplier))
+        col = (color[0], color[1], color[2], max(0, min(255, adj_alpha)))
         for (a, b) in self._contour_lines:
             pygame.draw.aaline(overlay, col, a, b)
             if width > 1:
                 pygame.draw.line(overlay, col, a, b, width)
         screen.blit(overlay, (0, 0))
+
+
+def ensure_dir(path):
+    try:
+        os.makedirs(path, exist_ok=True)
+    except Exception:
+        pass
+
+
+def load_or_fetch_basemap(screen_w, screen_h):
+    """Load basemap from assets or fetch from Esri export if missing.
+
+    Uses Esri Light Gray Canvas for subtle background harmony.
+    Extent roughly covering Shenzhen: bbox (minLon,minLat,maxLon,maxLat).
+    """
+    assets_dir = os.path.join(os.path.dirname(__file__), 'assets')
+    ensure_dir(assets_dir)
+    basemap_path = os.path.join(assets_dir, 'shenzhen_basemap.png')
+    if os.path.exists(basemap_path):
+        try:
+            img = pygame.image.load(basemap_path).convert_alpha()
+            return img
+        except Exception:
+            pass
+    # Try fetch from Esri export endpoint
+    # Service: Canvas/World_Light_Gray_Base (Web Mercator)
+    bbox = (113.75, 22.4, 114.5, 22.9)
+    url = (
+        'https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/export'
+        f'?bbox={bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}'
+        '&bboxSR=4326'
+        f'&size={screen_w},{screen_h}'
+        '&imageSR=3857'
+        '&format=png32'
+        '&transparent=true'
+        '&f=image'
+    )
+    try:
+        resp = requests.get(url, timeout=15)
+        if resp.status_code == 200 and resp.content:
+            with open(basemap_path, 'wb') as f:
+                f.write(resp.content)
+            img = pygame.image.load(basemap_path).convert_alpha()
+            return img
+    except Exception:
+        pass
+    return None
 
 def tone_for_component(component_name):
     """Return an RGB tone for low/mid/high cloud components."""
@@ -545,6 +599,22 @@ def run_visualization(df):
     # background fade strength (0-255). Lower = more motion smear
     bg_fade_alpha = 240
 
+    # Optional basemap: try to load or fetch a Shenzhen map
+    basemap_alpha = 230  # 0..255 (more prominent by default)
+    basemap_raw = load_or_fetch_basemap(screen_w, screen_h)
+    basemap_surf = None
+    if basemap_raw is not None:
+        # scale/crop to fill while preserving aspect ratio
+        rw, rh = basemap_raw.get_size()
+        scale = max(screen_w / rw, screen_h / rh)
+        tw, th = int(rw * scale), int(rh * scale)
+        scaled = pygame.transform.smoothscale(basemap_raw, (tw, th))
+        x0 = max(0, (tw - screen_w) // 2)
+        y0 = max(0, (th - screen_h) // 2)
+        basemap_surf = pygame.Surface((screen_w, screen_h), pygame.SRCALPHA)
+        basemap_surf.blit(scaled, (-x0, -y0))
+    # no tint: keep original colors for maximum clarity
+
     # disable particles; show cloud cover via dynamic contour fields only
     particles.clear()
 
@@ -587,6 +657,8 @@ def run_visualization(df):
     spawn_interval_s = 2.0
     spawn_timer = 0.0
 
+    # Global data opacity (0..1) applied to all data layers
+    data_opacity = 0.7
     running = True
     while running:
         dt_ms = clock.tick(60)
@@ -601,6 +673,26 @@ def run_visualization(df):
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     running = False
+                elif event.key == pygame.K_LEFTBRACKET:  # decrease data opacity
+                    data_opacity = max(0.0, data_opacity - 0.05)
+                elif event.key == pygame.K_RIGHTBRACKET:  # increase data opacity
+                    data_opacity = min(1.0, data_opacity + 0.05)
+                elif event.key == pygame.K_COMMA:  # decrease basemap opacity
+                    basemap_alpha = max(0, basemap_alpha - 10)
+                elif event.key == pygame.K_PERIOD:  # increase basemap opacity
+                    basemap_alpha = min(255, basemap_alpha + 10)
+                elif event.key == pygame.K_r:  # refetch basemap
+                    basemap_raw = load_or_fetch_basemap(screen_w, screen_h)
+                    if basemap_raw is not None:
+                        rw, rh = basemap_raw.get_size()
+                        scale = max(screen_w / rw, screen_h / rh)
+                        tw, th = int(rw * scale), int(rh * scale)
+                        scaled = pygame.transform.smoothscale(basemap_raw, (tw, th))
+                        x0 = max(0, (tw - screen_w) // 2)
+                        y0 = max(0, (th - screen_h) // 2)
+                        basemap_surf = pygame.Surface((screen_w, screen_h), pygame.SRCALPHA)
+                        basemap_surf.blit(scaled, (-x0, -y0))
+                        # no tint on refetch
 
         # advance to next timestamp
         if spawn_timer >= spawn_interval_s:
@@ -657,6 +749,17 @@ def run_visualization(df):
             bg_surf.set_alpha(bg_fade_alpha)
             screen.blit(bg_surf, (0, 0))
 
+        # Draw basemap under the cloud layers if available
+        if basemap_surf is not None and basemap_alpha > 0:
+            basemap_surf.set_alpha(basemap_alpha)
+            screen.blit(basemap_surf, (0, 0))
+
+        # apply global data opacity to layers
+        layer_total.opacity_multiplier = data_opacity
+        layer_low.opacity_multiplier = data_opacity
+        layer_mid.opacity_multiplier = data_opacity
+        layer_high.opacity_multiplier = data_opacity
+
         # draw dynamic contour layers (Total under components)
         layer_total.update(dt)
         layer_low.update(dt)
@@ -667,7 +770,7 @@ def run_visualization(df):
         layer_mid.draw(screen)
         layer_high.draw(screen)
 
-    # translucent contour overlay removed per request
+        # translucent contour overlay removed per request
 
         # overlay: show current timestamp and Total/Low/Mid/High
         current_row = rows[idx]
