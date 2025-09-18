@@ -18,6 +18,7 @@ import random
 import math
 from io import StringIO
 import pandas as pd
+import numpy as np
 
 try:
     import pygame
@@ -104,6 +105,302 @@ class Particle:
         pygame.draw.circle(s, (r, g, b, base_alpha), (outer_radius, outer_radius), int(self.size))
         surf.blit(s, (int(self.x - outer_radius), int(self.y - outer_radius)))
 
+class ContourLayer:
+    def __init__(self, width, height, bands=24, speed=20.0, scale=1.0, alpha=120):
+        self.w = width
+        self.h = height
+        self.bands = max(4, int(bands))
+        self.speed = speed
+        self.scale = max(0.25, float(scale))
+        self.offset = 0.0
+        self.alpha = alpha
+        self._target_alpha = alpha
+        self.surf = self._generate_surface()
+
+    def _generate_surface(self):
+        tw = max(128, int(self.w * self.scale))
+        th = max(128, int(self.h * self.scale))
+        tile = pygame.Surface((tw, th))
+        # generate quantized interference pattern (contour-like)
+        kx1, ky1 = 0.022, 0.018
+        kx2, ky2 = 0.011, -0.016
+        for y in range(th):
+            for x in range(tw):
+                v = 0.5 + 0.5 * math.sin(x * kx1 + y * ky1)
+                v += 0.5 + 0.5 * math.sin(x * kx2 + y * ky2)
+                v *= 0.5
+                q = math.floor(v * self.bands) / self.bands
+                g = int(255 * q)
+                r = int(g * 0.82)
+                gg = int(g * 0.9)
+                b = min(255, int(g * 1.18))
+                tile.set_at((x, y), (r, gg, b))
+        # upscale smoothly to screen size for better quality
+        surf = pygame.transform.smoothscale(tile, (self.w, self.h))
+        surf.set_alpha(self.alpha)
+        return surf
+
+    def set_cloud_factor(self, factor):
+        factor = max(0.0, min(1.0, factor))
+        # map cloudiness to visibility
+        self._target_alpha = int(40 + factor * 180)
+
+    def update(self, dt):
+        # ease alpha toward target
+        if self.alpha != self._target_alpha:
+            da = self._target_alpha - self.alpha
+            self.alpha += int(math.copysign(min(abs(da), 120 * dt), da))
+            self.surf.set_alpha(max(0, min(255, self.alpha)))
+        self.offset = (self.offset + self.speed * dt) % self.w
+
+    def draw(self, screen):
+        ox = int(self.offset)
+        # wrap horizontally by drawing two parts
+        right_rect = pygame.Rect(0, 0, self.w - ox, self.h)
+        left_rect = pygame.Rect(self.w - ox, 0, ox, self.h)
+        if right_rect.width > 0:
+            screen.blit(self.surf, (ox, 0), area=right_rect)
+        if left_rect.width > 0:
+            screen.blit(self.surf, (0, 0), area=left_rect)
+
+
+class DynamicContourLayer:
+    def __init__(self, width, height, scale=0.4, blobs=5, base_sigma=None, alpha=120,
+                 base_color=(80, 130, 200), center_darkness=0.55, edge_lightness=1.20,
+                 edge_alpha_floor=70, alpha_scale=160,
+                 detail_blobs=0, detail_sigma_factor=0.35, detail_speed=1.4):
+        self.w = width
+        self.h = height
+        self.scale = max(0.2, min(1.0, float(scale)))
+        self.gw = max(80, int(self.w * self.scale))
+        self.gh = max(60, int(self.h * self.scale))
+        self.alpha = int(alpha)
+        self._target_alpha = int(alpha)
+        # color shading parameters
+        self.base_color = np.array(base_color, dtype=np.float32)
+        self.center_darkness = float(center_darkness)
+        self.edge_lightness = float(edge_lightness)
+        self.edge_alpha_floor = int(edge_alpha_floor)
+        self.alpha_scale = int(alpha_scale)
+        # grid coords
+        xs = np.linspace(0, self.gw - 1, self.gw, dtype=np.float32)
+        ys = np.linspace(0, self.gh - 1, self.gh, dtype=np.float32)
+        self.X, self.Y = np.meshgrid(xs, ys)  # shape (gh, gw)
+        # blobs (centers in grid coords)
+        self.n = max(2, int(blobs))
+        rng = np.random.default_rng()
+        self.cx = rng.uniform(0, self.gw, size=self.n).astype(np.float32)
+        self.cy = rng.uniform(0, self.gh, size=self.n).astype(np.float32)
+        # velocities in grid units/sec
+        self.vx = rng.uniform(-6, 6, size=self.n).astype(np.float32)
+        self.vy = rng.uniform(-5, 5, size=self.n).astype(np.float32)
+        # gaussian sigma in grid units
+        self.base_sigma = base_sigma if base_sigma is not None else min(self.gw, self.gh) / 10.0
+        self.sigma = float(self.base_sigma)
+        self._target_sigma = float(self.sigma)
+        # intensity mapping
+        self.intensity = 1.0
+        self._target_intensity = 1.0
+        # gamma for falloff shaping
+        self.gamma = 0.75
+        # last scalar field and contour cache
+        self.last_V = None
+        self._contour_lines = None
+        self._contour_timer = 0.0
+        # shimmer highlight controls
+        self.shimmer_amp = 0.12
+        self.shimmer_threshold = 0.75
+        self.shimmer_speed = 0.6
+        self.phase = 0.0
+        # detail field (adds small-scale motion to avoid uniform look at 100%)
+        self.detail_n = max(0, int(detail_blobs))
+        self.detail_sigma_factor = float(detail_sigma_factor)
+        self.detail_speed = float(detail_speed)
+        if self.detail_n > 0:
+            self.dx = rng.uniform(0, self.gw, size=self.detail_n).astype(np.float32)
+            self.dy = rng.uniform(0, self.gh, size=self.detail_n).astype(np.float32)
+            self.dvx = rng.uniform(-8, 8, size=self.detail_n).astype(np.float32) * self.detail_speed
+            self.dvy = rng.uniform(-8, 8, size=self.detail_n).astype(np.float32) * self.detail_speed
+        else:
+            self.dx = self.dy = self.dvx = self.dvy = None
+        self.detail_strength = 0.0
+        self._target_detail_strength = 0.0
+        self._target_gamma = self.gamma
+
+    def set_cloud_factor(self, f):
+        f = max(0.0, min(1.0, float(f)))
+        # larger coverage -> larger sigma (area) and stronger intensity (darker center)
+        # keep sigma growth but temper at high f to preserve structure
+        self._target_sigma = self.base_sigma * (0.7 + 1.2 * f)
+        self._target_intensity = 0.5 + 1.5 * f
+        self._target_alpha = int(40 + 180 * f)
+        # more coverage -> a touch harder falloff and more detail
+        self._target_gamma = 0.80 + 0.35 * f  # toward 1.15 at f=1
+        self._target_detail_strength = 0.10 + 0.65 * f  # up to 0.75
+
+    def update(self, dt):
+        # move centers and wrap
+        self.cx = (self.cx + self.vx * dt) % self.gw
+        self.cy = (self.cy + self.vy * dt) % self.gh
+        # move detail centers and wrap
+        if self.detail_n > 0:
+            self.dx = (self.dx + self.dvx * dt) % self.gw
+            self.dy = (self.dy + self.dvy * dt) % self.gh
+        # ease parameters
+        self.sigma += (self._target_sigma - self.sigma) * min(1.0, 1.0 * dt)
+        self.intensity += (self._target_intensity - self.intensity) * min(1.0, 1.0 * dt)
+        self.gamma += (self._target_gamma - self.gamma) * min(1.0, 0.8 * dt)
+        self.detail_strength += (self._target_detail_strength - self.detail_strength) * min(1.0, 0.8 * dt)
+        # ease alpha
+        if self.alpha != self._target_alpha:
+            da = self._target_alpha - self.alpha
+            self.alpha += int(math.copysign(min(abs(da), 120 * dt), da))
+        self._contour_timer += dt
+        self.phase = (self.phase + self.shimmer_speed * dt) % 1000.0
+
+    def draw(self, screen):
+        # compute scalar field
+        F = np.zeros((self.gh, self.gw), dtype=np.float32)
+        s2 = 2.0 * (self.sigma ** 2)
+        for i in range(self.n):
+            dx = self.X - self.cx[i]
+            dy = self.Y - self.cy[i]
+            F += np.exp(-(dx * dx + dy * dy) / s2)
+        # optional detail field
+        if self.detail_n and self.detail_strength > 0.001:
+            Fd = np.zeros_like(F)
+            s2d = 2.0 * ((self.sigma * self.detail_sigma_factor) ** 2)
+            for i in range(self.detail_n):
+                dx = self.X - self.dx[i]
+                dy = self.Y - self.dy[i]
+                Fd += np.exp(-(dx * dx + dy * dy) / s2d)
+            # mix detail additively then normalize
+            F = F + self.detail_strength * Fd
+        # normalize to [0,1]
+        m = F.max()
+        if m > 1e-6:
+            V = (F / m) ** self.gamma
+        else:
+            V = F
+        # value field for shading
+        val = np.clip(V * self.intensity, 0.0, 1.0)
+        w = 1.0 - val  # 0 at center (dark), 1 at edges (light)
+        # compute per-channel colors by interpolating between darker center and lighter edge
+        c_center = np.clip(self.base_color * self.center_darkness, 0, 255)
+        c_edge = np.clip(self.base_color * self.edge_lightness, 0, 255)
+        r = (c_center[0] + w * (c_edge[0] - c_center[0])).astype(np.uint8)
+        g = (c_center[1] + w * (c_edge[1] - c_center[1])).astype(np.uint8)
+        b = (c_center[2] + w * (c_edge[2] - c_center[2])).astype(np.uint8)
+        # make edges less transparent by adding a floor to alpha; scale by eased layer alpha
+        a_base = np.clip(self.edge_alpha_floor + val * self.alpha_scale, 0, 255)
+        a = (a_base * max(0.0, min(1.0, self.alpha / 200.0))).astype(np.uint8)
+        rgba = np.dstack((r, g, b, a))
+        # blit to small surface
+        # create surface from buffer for speed
+        surf_small = pygame.image.frombuffer(rgba.tobytes(), (self.gw, self.gh), 'RGBA')
+        # convert_alpha to match display then scale
+        surf_small = surf_small.convert_alpha()
+        scaled = pygame.transform.smoothscale(surf_small, (self.w, self.h))
+        screen.blit(scaled, (0, 0))
+        # store for contour overlay
+        self.last_V = V
+
+    def _interp(self, p1, p2, v1, v2, level):
+        if abs(v2 - v1) < 1e-6:
+            t = 0.5
+        else:
+            t = (level - v1) / (v2 - v1)
+        return (p1[0] + t * (p2[0] - p1[0]), p1[1] + t * (p2[1] - p1[1]))
+
+    def _compute_contours(self, V, levels):
+        gh, gw = V.shape
+        sx = self.w / float(gw)
+        sy = self.h / float(gh)
+        lines = []
+        for level in levels:
+            for y in range(gh - 1):
+                for x in range(gw - 1):
+                    tl = V[y, x]
+                    tr = V[y, x + 1]
+                    br = V[y + 1, x + 1]
+                    bl = V[y + 1, x]
+                    idx = 0
+                    if tl >= level: idx |= 8
+                    if tr >= level: idx |= 4
+                    if br >= level: idx |= 2
+                    if bl >= level: idx |= 1
+                    if idx == 0 or idx == 15:
+                        continue
+                    # positions in grid coordinates
+                    p_tl = (x, y)
+                    p_tr = (x + 1, y)
+                    p_br = (x + 1, y + 1)
+                    p_bl = (x, y + 1)
+                    # edge interpolation
+                    # edges: top (tl-tr), right (tr-br), bottom (bl-br), left (tl-bl)
+                    e = [None, None, None, None]
+                    if idx in (1, 14, 13, 2, 11, 4, 7, 8, 0, 15, 3, 12, 6, 9, 5, 10):
+                        pass
+                    # compute intersections as needed
+                    if idx in (1, 5, 13, 9):
+                        e[3] = self._interp(p_tl, p_bl, tl, bl, level)
+                    if idx in (8, 10, 11, 9):
+                        e[0] = self._interp(p_tl, p_tr, tl, tr, level)
+                    if idx in (2, 6, 7, 3):
+                        e[1] = self._interp(p_tr, p_br, tr, br, level)
+                    if idx in (4, 5, 7, 6):
+                        e[2] = self._interp(p_bl, p_br, bl, br, level)
+                    if idx in (12, 14, 10, 11):
+                        e[3] = self._interp(p_tl, p_bl, tl, bl, level) if e[3] is None else e[3]
+                    if idx in (12, 13, 15, 14):
+                        e[0] = self._interp(p_tl, p_tr, tl, tr, level) if e[0] is None else e[0]
+                    if idx in (8, 12, 10, 11):
+                        e[1] = self._interp(p_tr, p_br, tr, br, level) if e[1] is None else e[1]
+                    if idx in (1, 3, 5, 7):
+                        e[2] = self._interp(p_bl, p_br, bl, br, level) if e[2] is None else e[2]
+                    # segment pairs per case (resolve ambiguities 5 and 10 consistently)
+                    table = {
+                        1:  [(e[3], e[2])],
+                        2:  [(e[1], e[2])],
+                        3:  [(e[3], e[1])],
+                        4:  [(e[0], e[1])],
+                        5:  [(e[0], e[3]), (e[1], e[2])],
+                        6:  [(e[0], e[2])],
+                        7:  [(e[0], e[3])],
+                        8:  [(e[0], e[3])],
+                        9:  [(e[0], e[2])],
+                        10: [(e[0], e[1]), (e[3], e[2])],
+                        11: [(e[0], e[1])],
+                        12: [(e[3], e[1])],
+                        13: [(e[1], e[2])],
+                        14: [(e[3], e[2])]
+                    }
+                    segs = table.get(idx, [])
+                    for a, b in segs:
+                        if a is None or b is None:
+                            continue
+                        # scale to screen coords
+                        ax, ay = a[0] * sx, a[1] * sy
+                        bx, by = b[0] * sx, b[1] * sy
+                        lines.append(((ax, ay), (bx, by)))
+        return lines
+
+    def draw_contours(self, screen, levels=(0.35, 0.5, 0.65, 0.8), color=(80, 130, 230), width=1, alpha=80):
+        if self.last_V is None:
+            return
+        # recompute at most 5 times per second
+        if self._contour_lines is None or self._contour_timer >= 0.3:
+            self._contour_lines = self._compute_contours(self.last_V, levels)
+            self._contour_timer = 0.0
+        if not self._contour_lines:
+            return
+        overlay = pygame.Surface((self.w, self.h), pygame.SRCALPHA)
+        col = (color[0], color[1], color[2], max(10, min(255, alpha)))
+        for (a, b) in self._contour_lines:
+            pygame.draw.aaline(overlay, col, a, b)
+            if width > 1:
+                pygame.draw.line(overlay, col, a, b, width)
+        screen.blit(overlay, (0, 0))
 
 def tone_for_component(component_name):
     """Return an RGB tone for low/mid/high cloud components."""
@@ -245,14 +542,47 @@ def run_visualization(df):
     idx = 0
     time_display_font = pygame.font.SysFont('Arial', 20)
 
-    # (Trailing removed) particles will be drawn directly onto the screen;
-    # per-particle halos and alpha fading are kept.
-    # background fade alpha (0-255). Lower = more lingering smear.
+    # background fade strength (0-255). Lower = more motion smear
     bg_fade_alpha = 240
 
-    # spawn initial particles for first timestamp
+    # disable particles; show cloud cover via dynamic contour fields only
+    particles.clear()
+
+    # Four dynamic contour layers for Total, Low, Mid, High
+    layer_total = DynamicContourLayer(screen_w, screen_h, scale=0.6, blobs=10, alpha=100,
+                                      base_color=(90, 140, 210), center_darkness=0.55, edge_lightness=1.15,
+                                      edge_alpha_floor=80, alpha_scale=170,
+                                      detail_blobs=6, detail_sigma_factor=0.30, detail_speed=1.2)
+    # Low: light blue
+    layer_low   = DynamicContourLayer(screen_w, screen_h, scale=0.65, blobs=8, alpha=0,
+                                      base_color=(160, 200, 255), center_darkness=0.60, edge_lightness=1.20,
+                                      edge_alpha_floor=85, alpha_scale=175,
+                                      detail_blobs=4, detail_sigma_factor=0.30, detail_speed=1.3)
+    # Mid: medium blue
+    layer_mid   = DynamicContourLayer(screen_w, screen_h, scale=0.6, blobs=8, alpha=0,
+                                      base_color=(90, 150, 235), center_darkness=0.55, edge_lightness=1.15,
+                                      edge_alpha_floor=90, alpha_scale=180,
+                                      detail_blobs=4, detail_sigma_factor=0.30, detail_speed=1.25)
+    # High: dark blue
+    layer_high  = DynamicContourLayer(screen_w, screen_h, scale=0.55, blobs=7, alpha=0,
+                                      base_color=(20, 60, 150), center_darkness=0.35, edge_lightness=1.08,
+                                      edge_alpha_floor=90, alpha_scale=210,
+                                      detail_blobs=6, detail_sigma_factor=0.28, detail_speed=1.35)
+
+    def set_layer_alphas_from_row(row):
+        t = float(row.get('cloud_cover (%)', 0)) / 100.0
+        lo = float(row.get('cloud_cover_low (%)', 0)) / 100.0
+        mi = float(row.get('cloud_cover_mid (%)', 0)) / 100.0
+        hi = float(row.get('cloud_cover_high (%)', 0)) / 100.0
+        layer_total.set_cloud_factor(t)
+        layer_low.set_cloud_factor(lo)
+        layer_mid.set_cloud_factor(mi)
+        layer_high.set_cloud_factor(hi)
+
+    set_layer_alphas_from_row(rows[idx])
+
+    # not used now but kept for minimal changes elsewhere
     angle_deg = 0
-    particles.extend(spawn_particles_for_row(rows[idx], screen_w, screen_h, angle_deg))
 
     spawn_interval_s = 2.0
     spawn_timer = 0.0
@@ -272,21 +602,14 @@ def run_visualization(df):
                 if event.key == pygame.K_ESCAPE:
                     running = False
 
-        # advance to next timestamp every spawn_interval_s seconds and add more particles
+        # advance to next timestamp
         if spawn_timer >= spawn_interval_s:
             spawn_timer = 0.0
             idx = (idx + 1) % len(rows)
-            # increment global angle by 1 degree each timestep
             angle_deg = (angle_deg + 1) % 360
-            particles.extend(spawn_particles_for_row(rows[idx], screen_w, screen_h, angle_deg))
+            set_layer_alphas_from_row(rows[idx])
 
-        # update particles
-        for p in particles:
-            p.update(dt)
-
-        # simple lifetime/trim: keep list manageable
-        if len(particles) > 2000:
-            particles = particles[-1500:]
+        # particles disabled
 
         # draw layered background gradient based on current time-of-day palette
         current_row = rows[idx]
@@ -334,23 +657,26 @@ def run_visualization(df):
             bg_surf.set_alpha(bg_fade_alpha)
             screen.blit(bg_surf, (0, 0))
 
-        # draw particles directly on the screen with time-of-day tint applied
-        tint = palettes[period]['tint']
-        for p in particles:
-            r, g, b = p.color
-            tr = min(255, int(r * tint[0]))
-            tg = min(255, int(g * tint[1]))
-            tb = min(255, int(b * tint[2]))
-            orig = p.color
-            p.color = (tr, tg, tb)
-            p.draw(screen)
-            p.color = orig
+        # draw dynamic contour layers (Total under components)
+        layer_total.update(dt)
+        layer_low.update(dt)
+        layer_mid.update(dt)
+        layer_high.update(dt)
+        layer_total.draw(screen)
+        layer_low.draw(screen)
+        layer_mid.draw(screen)
+        layer_high.draw(screen)
 
-        # overlay: show current timestamp and summary
+    # translucent contour overlay removed per request
+
+        # overlay: show current timestamp and Total/Low/Mid/High
         current_row = rows[idx]
         t_text = current_row['time'].strftime('%Y-%m-%d %H:%M')
         total_cloud = current_row.get('cloud_cover (%)', 0)
-        label = f'{t_text}  Total: {total_cloud:.0f}%'
+        low_cloud = current_row.get('cloud_cover_low (%)', 0)
+        mid_cloud = current_row.get('cloud_cover_mid (%)', 0)
+        high_cloud = current_row.get('cloud_cover_high (%)', 0)
+        label = f'{t_text}  Total:{total_cloud:.0f}%  Low:{low_cloud:.0f}%  Mid:{mid_cloud:.0f}%  High:{high_cloud:.0f}%'
         text_surf = time_display_font.render(label, True, (230, 230, 230))
         screen.blit(text_surf, (12, 12))
 
