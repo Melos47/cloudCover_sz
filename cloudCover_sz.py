@@ -654,7 +654,7 @@ def run_visualization(df):
     # not used now but kept for minimal changes elsewhere
     angle_deg = 0
 
-    spawn_interval_s = 0.7
+    spawn_interval_s = 1
     spawn_timer = 0.0
 
     # Global data opacity (0..1) applied to all data layers
