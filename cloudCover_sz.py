@@ -170,7 +170,8 @@ class DynamicContourLayer:
     def __init__(self, width, height, scale=0.4, blobs=5, base_sigma=None, alpha=120,
                  base_color=(80, 130, 200), center_darkness=0.55, edge_lightness=1.20,
                  edge_alpha_floor=70, alpha_scale=160,
-                 detail_blobs=0, detail_sigma_factor=0.35, detail_speed=1.4):
+                 detail_blobs=0, detail_sigma_factor=0.35, detail_speed=1.4,
+                 deep_color=None):
         self.w = width
         self.h = height
         self.scale = max(0.2, min(1.0, float(scale)))
@@ -179,7 +180,9 @@ class DynamicContourLayer:
         self.alpha = int(alpha)
         self._target_alpha = int(alpha)
         # color shading parameters
-        self.base_color = np.array(base_color, dtype=np.float32)
+        self.base_color0 = np.array(base_color, dtype=np.float32)
+        self.base_color = self.base_color0.copy()
+        self.deep_color = np.array(deep_color, dtype=np.float32) if deep_color is not None else None
         self.center_darkness = float(center_darkness)
         self.edge_lightness = float(edge_lightness)
         self.edge_alpha_floor = int(edge_alpha_floor)
@@ -230,6 +233,8 @@ class DynamicContourLayer:
         self._target_gamma = self.gamma
         # global opacity multiplier (0..1) applied on top of layer alpha
         self.opacity_multiplier = 1.0
+        # external speed multiplier (driven by overall cloudiness)
+        self.external_speed_scale = 1.0
 
     def set_cloud_factor(self, f):
         f = max(0.0, min(1.0, float(f)))
@@ -241,15 +246,20 @@ class DynamicContourLayer:
         # more coverage -> a touch harder falloff and more detail
         self._target_gamma = 0.80 + 0.35 * f  # toward 1.15 at f=1
         self._target_detail_strength = 0.10 + 0.65 * f  # up to 0.75
+        # color blend toward deep_color at higher cloud amounts, preserving smooth blend
+        if self.deep_color is not None:
+            s = f ** 0.85
+            self.base_color = (1.0 - s) * self.base_color0 + s * self.deep_color
 
     def update(self, dt):
-        # move centers and wrap
-        self.cx = (self.cx + self.vx * dt) % self.gw
-        self.cy = (self.cy + self.vy * dt) % self.gh
+        # move centers and wrap (scaled by external speed)
+        s = max(0.2, float(self.external_speed_scale))
+        self.cx = (self.cx + self.vx * dt * s) % self.gw
+        self.cy = (self.cy + self.vy * dt * s) % self.gh
         # move detail centers and wrap
         if self.detail_n > 0:
-            self.dx = (self.dx + self.dvx * dt) % self.gw
-            self.dy = (self.dy + self.dvy * dt) % self.gh
+            self.dx = (self.dx + self.dvx * dt * s) % self.gw
+            self.dy = (self.dy + self.dvy * dt * s) % self.gh
         # ease parameters
         self.sigma += (self._target_sigma - self.sigma) * min(1.0, 1.0 * dt)
         self.intensity += (self._target_intensity - self.intensity) * min(1.0, 1.0 * dt)
@@ -420,12 +430,12 @@ def ensure_dir(path):
 def load_or_fetch_basemap(screen_w, screen_h):
     """Load basemap from assets or fetch from Esri export if missing.
 
-    Uses Esri Light Gray Canvas for subtle background harmony.
+    Uses Esri Dark Gray Canvas for a deep-colored backdrop.
     Extent roughly covering Shenzhen: bbox (minLon,minLat,maxLon,maxLat).
     """
     assets_dir = os.path.join(os.path.dirname(__file__), 'assets')
     ensure_dir(assets_dir)
-    basemap_path = os.path.join(assets_dir, 'shenzhen_basemap.png')
+    basemap_path = os.path.join(assets_dir, 'shenzhen_basemap_dark.png')
     if os.path.exists(basemap_path):
         try:
             img = pygame.image.load(basemap_path).convert_alpha()
@@ -433,10 +443,10 @@ def load_or_fetch_basemap(screen_w, screen_h):
         except Exception:
             pass
     # Try fetch from Esri export endpoint
-    # Service: Canvas/World_Light_Gray_Base (Web Mercator)
+    # Service: Canvas/World_Dark_Gray_Base (Web Mercator)
     bbox = (113.75, 22.4, 114.5, 22.9)
     url = (
-        'https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/export'
+        'https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/export'
         f'?bbox={bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}'
         '&bboxSR=4326'
         f'&size={screen_w},{screen_h}'
@@ -613,16 +623,22 @@ def run_visualization(df):
         y0 = max(0, (th - screen_h) // 2)
         basemap_surf = pygame.Surface((screen_w, screen_h), pygame.SRCALPHA)
         basemap_surf.blit(scaled, (-x0, -y0))
-    # no tint: keep original colors for maximum clarity
+        # deep blue tint overlay for a richer dark backdrop
+        tint = pygame.Surface((screen_w, screen_h), pygame.SRCALPHA)
+        tint.fill((10, 20, 60, 90))  # deep blue with ~35% alpha
+        basemap_surf.blit(tint, (0, 0))
 
     # disable particles; show cloud cover via dynamic contour fields only
     particles.clear()
 
     # Four dynamic contour layers for Total, Low, Mid, High
-    layer_total = DynamicContourLayer(screen_w, screen_h, scale=0.6, blobs=10, alpha=100,
-                                      base_color=(90, 140, 210), center_darkness=0.55, edge_lightness=1.15,
-                                      edge_alpha_floor=80, alpha_scale=170,
-                                      detail_blobs=6, detail_sigma_factor=0.30, detail_speed=1.2)
+    layer_total = DynamicContourLayer(
+        screen_w, screen_h, scale=0.6, blobs=10, alpha=100,
+        base_color=(90, 140, 210), center_darkness=0.55, edge_lightness=1.15,
+        edge_alpha_floor=80, alpha_scale=170,
+        detail_blobs=6, detail_sigma_factor=0.30, detail_speed=1.2,
+        deep_color=(160, 50, 200)
+    )
     # Low: light blue
     layer_low   = DynamicContourLayer(screen_w, screen_h, scale=0.65, blobs=8, alpha=0,
                                       base_color=(160, 200, 255), center_darkness=0.60, edge_lightness=1.20,
@@ -648,6 +664,12 @@ def run_visualization(df):
         layer_low.set_cloud_factor(lo)
         layer_mid.set_cloud_factor(mi)
         layer_high.set_cloud_factor(hi)
+        # Increase motion speed when total coverage is high
+        speed_scale = 0.9 + 1.6 * t  # 0.9x at 0%, up to ~2.5x at 100%
+        layer_total.external_speed_scale = speed_scale
+        layer_low.external_speed_scale = speed_scale
+        layer_mid.external_speed_scale = speed_scale
+        layer_high.external_speed_scale = speed_scale
 
     set_layer_alphas_from_row(rows[idx])
 
@@ -693,6 +715,10 @@ def run_visualization(df):
                         basemap_surf = pygame.Surface((screen_w, screen_h), pygame.SRCALPHA)
                         basemap_surf.blit(scaled, (-x0, -y0))
                         # no tint on refetch
+                        # re-apply deep blue tint on refetch
+                        tint = pygame.Surface((screen_w, screen_h), pygame.SRCALPHA)
+                        tint.fill((10, 20, 60, 90))  # deep blue with ~35% alpha
+                        basemap_surf.blit(tint, (0, 0))
 
         # advance to next timestamp
         if spawn_timer >= spawn_interval_s:
@@ -757,7 +783,6 @@ def run_visualization(df):
         # apply global data opacity to layers
         layer_total.opacity_multiplier = data_opacity
         layer_low.opacity_multiplier = data_opacity
-        layer_mid.opacity_multiplier = data_opacity
         layer_high.opacity_multiplier = data_opacity
 
         # draw dynamic contour layers (Total under components)
