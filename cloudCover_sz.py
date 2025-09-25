@@ -21,6 +21,7 @@ from io import StringIO
 import pandas as pd
 import numpy as np
 import requests
+from datetime import datetime
 
 try:
     import pygame
@@ -719,6 +720,13 @@ def run_visualization(df):
                         tint = pygame.Surface((screen_w, screen_h), pygame.SRCALPHA)
                         tint.fill((10, 20, 60, 90))  # deep blue with ~35% alpha
                         basemap_surf.blit(tint, (0, 0))
+                elif event.key == pygame.K_s:  # save a screenshot
+                    assets_dir = os.path.join(os.path.dirname(__file__), 'assets')
+                    ensure_dir(assets_dir)
+                    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    out_path = os.path.join(assets_dir, f'preview_{ts}.png')
+                    pygame.image.save(pygame.display.get_surface(), out_path)
+                    print(f'Screenshot saved to {out_path}')
 
         # advance to next timestamp
         if spawn_timer >= spawn_interval_s:
