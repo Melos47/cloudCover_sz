@@ -554,19 +554,33 @@ def run_visualization(df):
     lat_min, lat_max = 22.4, 22.8
     lon_min, lon_max = 113.8, 114.3
     
-    # Shenzhen districts and landmarks
+    # Shenzhen districts (within city)
     shenzhen_areas = [
-        {'name': 'Futian District', 'lat': 22.52, 'lon': 114.06},
-        {'name': 'Luohu District', 'lat': 22.55, 'lon': 114.13},
-        {'name': 'Nanshan District', 'lat': 22.53, 'lon': 113.93},
-        {'name': 'Yantian District', 'lat': 22.58, 'lon': 114.24},
-        {'name': 'Baoan District', 'lat': 22.56, 'lon': 113.88},
-        {'name': 'Longgang District', 'lat': 22.72, 'lon': 114.25},
-        {'name': 'Longhua District', 'lat': 22.65, 'lon': 114.03},
-        {'name': 'Pingshan District', 'lat': 22.70, 'lon': 114.35},
-        {'name': 'Guangming District', 'lat': 22.75, 'lon': 113.95},
-        {'name': 'Dapeng Peninsula', 'lat': 22.60, 'lon': 114.48},
+        {'name': 'Futian District', 'lat': 22.52, 'lon': 114.06, 'type': 'shenzhen'},
+        {'name': 'Luohu District', 'lat': 22.55, 'lon': 114.13, 'type': 'shenzhen'},
+        {'name': 'Nanshan District', 'lat': 22.53, 'lon': 113.93, 'type': 'shenzhen'},
+        {'name': 'Yantian District', 'lat': 22.58, 'lon': 114.24, 'type': 'shenzhen'},
+        {'name': 'Baoan District', 'lat': 22.56, 'lon': 113.88, 'type': 'shenzhen'},
+        {'name': 'Longgang District', 'lat': 22.72, 'lon': 114.25, 'type': 'shenzhen'},
+        {'name': 'Longhua District', 'lat': 22.65, 'lon': 114.03, 'type': 'shenzhen'},
+        {'name': 'Pingshan District', 'lat': 22.70, 'lon': 114.35, 'type': 'shenzhen'},
+        {'name': 'Guangming District', 'lat': 22.75, 'lon': 113.95, 'type': 'shenzhen'},
+        {'name': 'Dapeng Peninsula', 'lat': 22.60, 'lon': 114.48, 'type': 'shenzhen'},
     ]
+    
+    # Surrounding areas (neighboring cities/regions)
+    surrounding_areas = [
+        {'name': 'Hong Kong (North)', 'lat': 22.50, 'lon': 114.15, 'type': 'surrounding'},
+        {'name': 'Dongguan (West)', 'lat': 22.65, 'lon': 113.75, 'type': 'surrounding'},
+        {'name': 'Huizhou (East)', 'lat': 22.75, 'lon': 114.42, 'type': 'surrounding'},
+        {'name': 'Zhongshan (West)', 'lat': 22.52, 'lon': 113.38, 'type': 'surrounding'},
+        {'name': 'Zhuhai (Southwest)', 'lat': 22.27, 'lon': 113.57, 'type': 'surrounding'},
+        {'name': 'Shenzhen Bay', 'lat': 22.48, 'lon': 113.95, 'type': 'surrounding'},
+        {'name': 'Daya Bay', 'lat': 22.65, 'lon': 114.55, 'type': 'surrounding'},
+    ]
+    
+    # Combine all areas
+    all_areas = shenzhen_areas + surrounding_areas
     
     def get_location_info(mouse_x, mouse_y):
         """Convert mouse position to lat/lon and find nearest area."""
@@ -581,14 +595,22 @@ def run_visualization(df):
         
         # Find nearest area
         min_dist = float('inf')
-        nearest_area = 'Shenzhen'
-        for area in shenzhen_areas:
+        nearest_area = None
+        for area in all_areas:
             dist = ((lat - area['lat'])**2 + (lon - area['lon'])**2)**0.5
             if dist < min_dist:
                 min_dist = dist
-                nearest_area = area['name']
+                nearest_area = area
         
-        return {'name': nearest_area, 'lat': lat, 'lon': lon}
+        if nearest_area is None:
+            return None
+        
+        return {
+            'name': nearest_area['name'],
+            'lat': lat,
+            'lon': lon,
+            'type': nearest_area['type']
+        }
     
     # Custom color palette
     RETRO_BG = (14, 47, 100)          # Primary theme color - deep blue background
@@ -672,7 +694,7 @@ def run_visualization(df):
     bg_fade_alpha = 240
 
     # Optional basemap: try to load or fetch a Shenzhen map (sized for viz area)
-    basemap_alpha = 180  # 0..255 (subtle for retro look)
+    basemap_alpha = 200  # 0..255 (increased for better visibility)
     basemap_raw = load_or_fetch_basemap(viz_w, screen_h)
     basemap_surf = None
     if basemap_raw is not None:
@@ -685,9 +707,9 @@ def run_visualization(df):
         y0 = max(0, (th - screen_h) // 2)
         basemap_surf = pygame.Surface((viz_w, screen_h), pygame.SRCALPHA)
         basemap_surf.blit(scaled, (-x0, -y0))
-        # Theme-consistent tint overlay
+        # Theme-consistent tint overlay (lighter tint for brighter map)
         tint = pygame.Surface((viz_w, screen_h), pygame.SRCALPHA)
-        tint.fill((14, 47, 100, 100))  # Primary theme color with ~40% alpha
+        tint.fill((14, 47, 100, 60))  # Reduced alpha from 100 to 60 for brighter appearance
         basemap_surf.blit(tint, (0, 0))
 
     # disable particles; show cloud cover via dynamic contour fields only
@@ -945,27 +967,46 @@ def run_visualization(df):
         location_info = get_location_info(mouse_pos[0], mouse_pos[1])
         
         if location_info and mouse_pos[0] >= sidebar_w:
+            # Determine colors based on location type
+            if location_info['type'] == 'shenzhen':
+                # Shenzhen: bright cyan/blue (main theme colors)
+                border_color = RETRO_BORDER  # (101, 216, 223) cyan
+                name_color = RETRO_ACCENT    # (64, 109, 242) blue
+                bg_color = (14, 47, 100, 220)
+            else:
+                # Surrounding areas: orange/amber tones for distinction
+                border_color = (255, 180, 100)  # warm orange
+                name_color = (255, 200, 120)    # amber
+                bg_color = (80, 40, 20, 220)    # darker warm background
+            
             # Create semi-transparent info panel
-            info_w, info_h = 300, 70
+            info_w, info_h = 320, 75
             info_x = screen_w - info_w - 15
             info_y = screen_h - info_h - 15
             
             # Background panel
             info_surf = pygame.Surface((info_w, info_h), pygame.SRCALPHA)
-            info_surf.fill((14, 47, 100, 220))  # Semi-transparent background
-            pygame.draw.rect(info_surf, RETRO_BORDER, (0, 0, info_w, info_h), 1)
+            info_surf.fill(bg_color)
+            pygame.draw.rect(info_surf, border_color, (0, 0, info_w, info_h), 2)
             
-            # Location name
-            name_surf = font_label.render(location_info['name'], True, RETRO_ACCENT)
+            # Location name with type indicator
+            name_text = location_info['name']
+            if location_info['type'] == 'surrounding':
+                name_text = f"○ {name_text}"  # Circle indicator for surrounding
+            else:
+                name_text = f"● {name_text}"  # Solid dot for Shenzhen
+            
+            name_surf = font_label.render(name_text, True, name_color)
             info_surf.blit(name_surf, (10, 10))
             
             # Coordinates
             lat_str = f"LAT: {location_info['lat']:.4f}N"
             lon_str = f"LON: {location_info['lon']:.4f}E"
-            lat_surf = font_small.render(lat_str, True, RETRO_TEXT)
-            lon_surf = font_small.render(lon_str, True, RETRO_TEXT)
-            info_surf.blit(lat_surf, (10, 35))
-            info_surf.blit(lon_surf, (10, 52))
+            coord_color = (200, 220, 240) if location_info['type'] == 'shenzhen' else (255, 220, 180)
+            lat_surf = font_small.render(lat_str, True, coord_color)
+            lon_surf = font_small.render(lon_str, True, coord_color)
+            info_surf.blit(lat_surf, (10, 38))
+            info_surf.blit(lon_surf, (10, 55))
             
             # Blit info panel to screen
             screen.blit(info_surf, (info_x, info_y))
