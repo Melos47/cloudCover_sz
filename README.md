@@ -1,12 +1,14 @@
 # Shenzhen Cloud Coverage Visualization
 
-An atmospheric, looping visualization of Shenzhen’s cloud coverage with smooth, blue-toned dynamic contours rendered in Pygame, plus Matplotlib utilities to generate static charts. The basemap uses a deep, dark style for contrast and the highest cloud amounts shift toward a blue–magenta hue.
+A retro-futuristic, Mac OS 3 inspired visualization of Shenzhen's cloud coverage with smooth, cyan-teal-amber dynamic contours rendered in Pygame. Features a classic CRT-style left sidebar panel displaying real-time data metrics with progress bars, and a main visualization area with deep charcoal backgrounds. The highest cloud amounts shift from cyan-teal toward warm amber tones.
 
-## What’s inside
+## What's inside
 
 - Pygame animation (`cloudCover_sz.py`)
-  - Smooth, coherent flow using Gaussian scalar fields and soft contour shading (no particles)
-  - Deep-colored Shenzhen basemap underlay (Esri Dark Gray + subtle blue tint)
+  - **Retro-futuristic UI**: Mac OS 3 inspired design with CRT green text and amber highlights
+  - **Left sidebar panel (280px)**: Real-time cloud data display with monospace fonts and progress bars
+  - **Main visualization area**: Smooth, coherent flow using Gaussian scalar fields with cyan-teal-amber color palette
+  - Deep-colored Shenzhen basemap underlay (Esri Dark Gray + cyan-teal tint)
   - Motion and visual intensity scale with cloud coverage
   - Keyboard controls for opacity and basemap blending
 - Static charts (`cloudCover_sz_img.py`)
@@ -75,10 +77,21 @@ First run will try to load `assets/shenzhen_basemap_dark.png`. If not found, the
 
 ### Visual behavior
 
-- Total, Low, Mid, High coverage are shown as soft, blurred contour fields with darker cores and lighter edges.
-- The Total layer’s color smoothly shifts toward a blue–magenta hue as coverage increases, blending with lighter blues.
-- Motion gets more obvious when the total coverage is high: the flow speed scales from ~0.9× (clear) up to ~2.5× (overcast).
-- Deep, dark Shenzhen basemap under the data for context.
+- **Retro aesthetic**: Mac OS 3 inspired design with custom blue-themed color palette
+- **ASCII-style cloud rendering**: 
+  - Fine-grained pixelated visual style using nearest-neighbor scaling
+  - Refined quantized intensity levels (12 levels) for smooth gradations
+  - **Gradient edges**: Subtle transparency fade at block boundaries (2x2 pixel blocks for refined detail)
+  - **Breathing animation**: Gentle pulsing effect (85%-115% intensity cycle)
+  - Subtle dithering patterns (checkerboard + scanlines) for delicate texture
+  - Dense ASCII character overlay (`.·:░▒▓█`) at 8-pixel spacing with 7pt font
+  - Character opacity and selection varies with cloud intensity and breathing rhythm
+- **Left data panel**: Displays TOTAL COVERAGE with vibrant blue accent and progress bar, plus LOW/MID/HIGH metrics with color-coded mini bars
+- **Right visualization area**: Total, Low, Mid, High coverage shown as ASCII-style pixelated contour fields
+- The Total layer's color smoothly shifts from bright blue toward vibrant accent blue as coverage increases
+- Motion gets more obvious when the total coverage is high: the flow speed scales from ~0.9× (clear) up to ~2.5× (overcast)
+- Deep blue background (RGB 14, 47, 100) with subtle gradient and optional Shenzhen basemap
+- Monospace fonts (Monaco/Courier) throughout for authentic retro computing feel
 
 ## How to run (static charts)
 
@@ -98,10 +111,17 @@ If a GUI is available, the script will try common backends (Qt/Tk/Mac) to displa
 
 ## Configuration notes
 
+- **UI Layout**: Left sidebar is 280px wide, main visualization fills the remaining space (920px on 1200px screen)
+- **Color palette**: Custom blue-themed scheme
+  - Primary theme / Background: RGB(14, 47, 100) - Deep blue
+  - Secondary theme: RGB(97, 143, 159) - Teal-gray
+  - Accent colors: RGB(64, 109, 242) - Vibrant blue / RGB(101, 216, 223) - Cyan
+  - Text: RGB(89, 170, 245) - Bright blue / RGB(99, 100, 138) - Muted gray
+  - Cloud colors: Blue-cyan gradient with accent highlights at high coverage
 - Basemap source: Esri Dark Gray Canvas via the public export endpoint. The cached file is `assets/shenzhen_basemap_dark.png`.
-- Basemap tint: A subtle deep-blue overlay is applied for a richer, “deep color” look. You can adjust opacity in code or with `,`/`.` at runtime.
-- Month filter: The animation currently filters data to August. Modify the filter in `cloudCover_sz.py` if you’d like a different period.
-- Colors: Base blues are tuned for readability; the Total layer has a magenta-leaning high-coverage target for contrast.
+- Basemap tint: A subtle cyan-teal overlay is applied for retro aesthetic consistency. You can adjust opacity in code or with `,`/`.` at runtime.
+- Month filter: The animation currently filters data to August. Modify the filter in `cloudCover_sz.py` if you'd like a different period.
+- Fonts: Monospace fonts (Monaco preferred, falls back to Courier New/Courier) for authentic retro computing look.
 
 ## Troubleshooting (macOS)
 
