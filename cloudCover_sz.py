@@ -612,14 +612,14 @@ def run_visualization(df):
             'type': nearest_area['type']
         }
     
-    # Custom color palette
+    # Custom color palette (brightened and more saturated UI)
     RETRO_BG = (14, 47, 100)          # Primary theme color - deep blue background
-    RETRO_PANEL = (14, 47, 100)       # Sidebar panel - same as background
-    RETRO_BORDER = (101, 216, 223)    # Accent color - cyan borders
-    RETRO_TEXT = (89, 170, 245)       # Text color - bright blue
-    RETRO_ACCENT = (64, 109, 242)     # Accent color - vibrant blue
-    RETRO_DIM = (99, 100, 138)        # Dimmed text - muted purple-gray
-    RETRO_SECONDARY = (64, 109, 242)  # Secondary theme color - teal-gray
+    RETRO_PANEL = (10, 40, 90)        # Sidebar panel - darker blue background
+    RETRO_BORDER = (0, 240, 255)      # Accent color - vivid cyan borders (high saturation)
+    RETRO_TEXT = (80, 200, 255)       # Text color - bright saturated blue
+    RETRO_ACCENT = (50, 150, 255)     # Accent color - vivid blue (high saturation)
+    RETRO_DIM = (140, 150, 200)       # Dimmed text - more saturated purple-blue
+    RETRO_SECONDARY = (50, 150, 255)  # Secondary theme color - vivid blue
 
     # Helper: time-of-day classification and palettes
     def period_for_hour(h):
@@ -729,9 +729,9 @@ def run_visualization(df):
                                       base_color=(140, 210, 230), center_darkness=0.60, edge_lightness=1.20,
                                       edge_alpha_floor=85, alpha_scale=175,
                                       detail_blobs=4, detail_sigma_factor=0.30, detail_speed=1.3)
-    # Mid: cyan-blue blend
+    # Mid: more blue (less green/cyan to distinguish from Low)
     layer_mid   = DynamicContourLayer(viz_w, screen_h, scale=0.6, blobs=8, alpha=0,
-                                      base_color=(110, 180, 210), center_darkness=0.55, edge_lightness=1.15,
+                                      base_color=(90, 160, 230), center_darkness=0.55, edge_lightness=1.15,
                                       edge_alpha_floor=90, alpha_scale=180,
                                       detail_blobs=4, detail_sigma_factor=0.30, detail_speed=1.25)
     # High: deeper purple-blue
@@ -923,16 +923,16 @@ def run_visualization(df):
         
         y_offset += 54
         
-        # Mid cloud
+        # Mid cloud (more blue color)
         label_mid = font_label.render('MID', True, RETRO_TEXT)
         sidebar_surf.blit(label_mid, (20, y_offset))
-        val_mid = font_value.render(f'{mid_cloud:.1f}%', True, (110, 180, 210))
+        val_mid = font_value.render(f'{mid_cloud:.1f}%', True, (90, 160, 230))
         sidebar_surf.blit(val_mid, (sidebar_w - val_mid.get_width() - 20, y_offset))
         
         pygame.draw.rect(sidebar_surf, RETRO_DIM, (20, y_offset + 28, mini_bar_w, 10), 1)
         fill_mid = int(mini_bar_w * (mid_cloud / 100.0))
         if fill_mid > 0:
-            pygame.draw.rect(sidebar_surf, (110, 180, 210), (21, y_offset + 29, fill_mid, 8))
+            pygame.draw.rect(sidebar_surf, (90, 160, 230), (21, y_offset + 29, fill_mid, 8))
         
         y_offset += 54
         
