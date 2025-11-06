@@ -299,43 +299,7 @@ class DynamicContourLayer:
             V = F
         # value field for shading
         val = np.clip(V * self.intensity, 0.0, 1.0)
-        
-        # === ASCII-style pixelated rendering with gradient edges ===
-        # Quantize values to discrete levels for blocky ASCII effect
-        block_size = 2  # Size of each pixel block (smaller = more refined)
-        val_quantized = np.floor(val * 12) / 12.0  # 12 intensity levels (more gradations)
-        
-        # Create edge gradient effect - fade at block boundaries
-        edge_gradient = np.ones_like(val)
-        for y in range(self.gh):
-            for x in range(self.gw):
-                # Calculate position within block
-                bx = x % block_size
-                by = y % block_size
-                # Distance from block edge (normalized)
-                edge_dist_x = min(bx, block_size - bx - 1) / (block_size / 2.0)
-                edge_dist_y = min(by, block_size - by - 1) / (block_size / 2.0)
-                edge_dist = min(edge_dist_x, edge_dist_y)
-                # Apply smooth gradient at edges (more subtle fade)
-                edge_gradient[y, x] = 0.5 + 0.5 * edge_dist
-        
-        # Breathing animation effect (pulse between 0.85 and 1.15)
-        breathing = 1.0 + 0.15 * math.sin(self.phase * 0.5)
-        
-        # Create dithering pattern for ASCII texture (more subtle)
-        dither = np.zeros_like(val)
-        for y in range(self.gh):
-            for x in range(self.gw):
-                # Checkerboard dither pattern (reduced intensity)
-                if (x + y) % 2 == 0:
-                    dither[y, x] = 0.02
-                # Add scanline effect (more subtle)
-                if y % 2 == 0:
-                    dither[y, x] += 0.015
-        
-        # Combine quantized values with edge gradient and breathing
-        val_ascii = np.clip((val_quantized + dither) * edge_gradient * breathing, 0.0, 1.0)
-        w = 1.0 - val_ascii
+        w = 1.0 - val
         
         # compute per-channel colors by interpolating between darker center and lighter edge
         c_center = np.clip(self.base_color * self.center_darkness, 0, 255)
@@ -345,48 +309,19 @@ class DynamicContourLayer:
         b = (c_center[2] + w * (c_edge[2] - c_center[2])).astype(np.uint8)
         
         # make edges less transparent by adding a floor to alpha; scale by eased layer alpha
-        # Apply edge gradient to alpha for smooth block transitions
-        a_base = np.clip(self.edge_alpha_floor + val_ascii * self.alpha_scale, 0, 255)
+        a_base = np.clip(self.edge_alpha_floor + val * self.alpha_scale, 0, 255)
         a = a_base * max(0.0, min(1.0, self.alpha / 200.0))
-        # Apply edge gradient to alpha channel for smooth fading at block edges
-        a = a * edge_gradient
-        # apply global opacity multiplier with breathing effect
-        a = np.clip(a * float(self.opacity_multiplier) * breathing, 0, 255).astype(np.uint8)
+        # apply global opacity multiplier
+        a = np.clip(a * float(self.opacity_multiplier), 0, 255).astype(np.uint8)
         rgba = np.dstack((r, g, b, a))
         
         # blit to small surface
         surf_small = pygame.image.frombuffer(rgba.tobytes(), (self.gw, self.gh), 'RGBA')
         surf_small = surf_small.convert_alpha()
         
-        # Use NEAREST neighbor for blocky ASCII pixelated effect instead of smooth
-        scaled = pygame.transform.scale(surf_small, (self.w, self.h))
+        # smooth scale to final size
+        scaled = pygame.transform.smoothscale(surf_small, (self.w, self.h))
         screen.blit(scaled, (0, 0))
-        
-        # === ASCII character overlay for retro text effect ===
-        # Draw ASCII characters at grid points based on cloud density
-        char_font = pygame.font.SysFont('Courier New, Monaco', 7, bold=True)
-        ascii_chars = ['.', '·', ':', '░', '▒', '▓', '█']
-        
-        # Sample every Nth pixel for character placement (smaller spacing = more dense)
-        char_spacing = 8
-        for cy in range(0, self.h, char_spacing):
-            for cx in range(0, self.w, char_spacing):
-                # Map screen coords back to field coords
-                gx = int(cx * self.gw / self.w)
-                gy = int(cy * self.gh / self.h)
-                if gx < self.gw and gy < self.gh:
-                    v = V[gy, gx]
-                    if v > 0.15:  # Only show chars where clouds exist
-                        # Select character based on density
-                        char_idx = min(int(v * len(ascii_chars)), len(ascii_chars) - 1)
-                        char = ascii_chars[char_idx]
-                        # Color based on cloud intensity with breathing effect
-                        char_alpha = int(min(255, v * 200 * self.opacity_multiplier * breathing))
-                        if char_alpha > 30:
-                            char_col = tuple(self.base_color.astype(int)) + (char_alpha,)
-                            char_surf = char_font.render(char, True, char_col[:3])
-                            char_surf.set_alpha(char_alpha)
-                            screen.blit(char_surf, (cx - 3, cy - 4))
         
         # store for contour overlay
         self.last_V = V
@@ -614,6 +549,47 @@ def run_visualization(df):
     pygame.display.set_caption('SHENZHEN CLOUD MONITOR v3.1')
     clock = pygame.time.Clock()
     
+    # Geographic bounds for Shenzhen area (approximate)
+    # Map covers roughly: 22.4N-22.8N, 113.8E-114.3E
+    lat_min, lat_max = 22.4, 22.8
+    lon_min, lon_max = 113.8, 114.3
+    
+    # Shenzhen districts and landmarks
+    shenzhen_areas = [
+        {'name': 'Futian District', 'lat': 22.52, 'lon': 114.06},
+        {'name': 'Luohu District', 'lat': 22.55, 'lon': 114.13},
+        {'name': 'Nanshan District', 'lat': 22.53, 'lon': 113.93},
+        {'name': 'Yantian District', 'lat': 22.58, 'lon': 114.24},
+        {'name': 'Baoan District', 'lat': 22.56, 'lon': 113.88},
+        {'name': 'Longgang District', 'lat': 22.72, 'lon': 114.25},
+        {'name': 'Longhua District', 'lat': 22.65, 'lon': 114.03},
+        {'name': 'Pingshan District', 'lat': 22.70, 'lon': 114.35},
+        {'name': 'Guangming District', 'lat': 22.75, 'lon': 113.95},
+        {'name': 'Dapeng Peninsula', 'lat': 22.60, 'lon': 114.48},
+    ]
+    
+    def get_location_info(mouse_x, mouse_y):
+        """Convert mouse position to lat/lon and find nearest area."""
+        # Adjust for sidebar offset
+        if mouse_x < sidebar_w:
+            return None
+        
+        viz_x = mouse_x - sidebar_w
+        # Convert screen position to lat/lon
+        lon = lon_min + (viz_x / viz_w) * (lon_max - lon_min)
+        lat = lat_max - (mouse_y / screen_h) * (lat_max - lat_min)
+        
+        # Find nearest area
+        min_dist = float('inf')
+        nearest_area = 'Shenzhen'
+        for area in shenzhen_areas:
+            dist = ((lat - area['lat'])**2 + (lon - area['lon'])**2)**0.5
+            if dist < min_dist:
+                min_dist = dist
+                nearest_area = area['name']
+        
+        return {'name': nearest_area, 'lat': lat, 'lon': lon}
+    
     # Custom color palette
     RETRO_BG = (14, 47, 100)          # Primary theme color - deep blue background
     RETRO_PANEL = (14, 47, 100)       # Sidebar panel - same as background
@@ -686,11 +662,11 @@ def run_visualization(df):
 
     particles = []
     idx = 0
-    # Retro monospace fonts
-    font_title = pygame.font.SysFont('Monaco, Courier New, Courier', 16, bold=True)
-    font_label = pygame.font.SysFont('Monaco, Courier New, Courier', 13)
-    font_value = pygame.font.SysFont('Monaco, Courier New, Courier', 14, bold=True)
-    font_small = pygame.font.SysFont('Monaco, Courier New, Courier', 11)
+    # Tech-style monospace fonts - using Menlo (macOS code editor font)
+    font_title = pygame.font.SysFont('menlo', 18, bold=True)
+    font_label = pygame.font.SysFont('menlo', 14)
+    font_value = pygame.font.SysFont('menlo', 16, bold=True)
+    font_small = pygame.font.SysFont('menlo', 12)
 
     # background fade strength (0-255). Lower = more motion smear
     bg_fade_alpha = 240
@@ -718,27 +694,27 @@ def run_visualization(df):
     particles.clear()
 
     # Four dynamic contour layers for Total, Low, Mid, High
-    # Using unified blue-toned palette for consistent color harmony
+    # Using softer cyan-purple tones to distinguish from UI blue
     layer_total = DynamicContourLayer(
         viz_w, screen_h, scale=0.6, blobs=10, alpha=100,
-        base_color=(89, 170, 245), center_darkness=0.55, edge_lightness=1.15,
+        base_color=(120, 200, 220), center_darkness=0.55, edge_lightness=1.15,
         edge_alpha_floor=80, alpha_scale=170,
         detail_blobs=6, detail_sigma_factor=0.30, detail_speed=1.2,
-        deep_color=(64, 109, 242)  # Shift to vibrant blue at high coverage
+        deep_color=(80, 150, 200)  # Shift to softer blue at high coverage
     )
-    # Low: lighter shade of main blue
+    # Low: light cyan
     layer_low   = DynamicContourLayer(viz_w, screen_h, scale=0.65, blobs=8, alpha=0,
-                                      base_color=(101, 180, 235), center_darkness=0.60, edge_lightness=1.20,
+                                      base_color=(140, 210, 230), center_darkness=0.60, edge_lightness=1.20,
                                       edge_alpha_floor=85, alpha_scale=175,
                                       detail_blobs=4, detail_sigma_factor=0.30, detail_speed=1.3)
-    # Mid: medium blue-cyan blend
+    # Mid: cyan-blue blend
     layer_mid   = DynamicContourLayer(viz_w, screen_h, scale=0.6, blobs=8, alpha=0,
-                                      base_color=(80, 150, 220), center_darkness=0.55, edge_lightness=1.15,
+                                      base_color=(110, 180, 210), center_darkness=0.55, edge_lightness=1.15,
                                       edge_alpha_floor=90, alpha_scale=180,
                                       detail_blobs=4, detail_sigma_factor=0.30, detail_speed=1.25)
-    # High: deeper saturated blue
+    # High: deeper purple-blue
     layer_high  = DynamicContourLayer(viz_w, screen_h, scale=0.55, blobs=7, alpha=0,
-                                      base_color=(64, 109, 242), center_darkness=0.35, edge_lightness=1.08,
+                                      base_color=(100, 110, 200), center_darkness=0.35, edge_lightness=1.08,
                                       edge_alpha_floor=90, alpha_scale=210,
                                       detail_blobs=6, detail_sigma_factor=0.28, detail_speed=1.35)
 
@@ -874,90 +850,125 @@ def run_visualization(df):
         sidebar_surf = pygame.Surface((sidebar_w, screen_h))
         sidebar_surf.fill(RETRO_PANEL)
         
-        # Outer border (classic Mac OS style)
+        # Simple border
         pygame.draw.rect(sidebar_surf, RETRO_BORDER, (0, 0, sidebar_w, screen_h), 2)
-        pygame.draw.line(sidebar_surf, RETRO_BORDER, (0, 50), (sidebar_w, 50), 1)
         
         # Title bar
+        pygame.draw.line(sidebar_surf, RETRO_BORDER, (0, 60), (sidebar_w, 60), 1)
         title_surf = font_title.render('CLOUD MONITOR', True, RETRO_ACCENT)
-        sidebar_surf.blit(title_surf, (12, 15))
+        sidebar_surf.blit(title_surf, (20, 18))
         
         # System time
         time_surf = font_small.render(t_text, True, RETRO_DIM)
-        sidebar_surf.blit(time_surf, (12, 60))
+        sidebar_surf.blit(time_surf, (20, 70))
         
         # Data section
-        y_offset = 100
+        y_offset = 110
         
         # Total cloud cover (prominent)
         label_total = font_label.render('TOTAL COVERAGE', True, RETRO_TEXT)
-        sidebar_surf.blit(label_total, (12, y_offset))
+        sidebar_surf.blit(label_total, (20, y_offset))
         val_total = font_value.render(f'{total_cloud:.1f}%', True, RETRO_ACCENT)
-        sidebar_surf.blit(val_total, (12, y_offset + 20))
+        sidebar_surf.blit(val_total, (20, y_offset + 24))
         
         # Progress bar for total
         bar_w = sidebar_w - 40
-        bar_h = 14
-        pygame.draw.rect(sidebar_surf, RETRO_DIM, (12, y_offset + 45, bar_w, bar_h), 1)
+        bar_h = 16
+        pygame.draw.rect(sidebar_surf, RETRO_DIM, (20, y_offset + 54, bar_w, bar_h), 1)
         fill_w = int(bar_w * (total_cloud / 100.0))
         if fill_w > 0:
-            pygame.draw.rect(sidebar_surf, RETRO_ACCENT, (13, y_offset + 46, fill_w, bar_h - 2))
+            pygame.draw.rect(sidebar_surf, RETRO_ACCENT, (21, y_offset + 55, fill_w, bar_h - 2))
         
-        y_offset += 85
+        y_offset += 90
+        
+        # Separator
+        pygame.draw.line(sidebar_surf, RETRO_BORDER, (20, y_offset), (sidebar_w-20, y_offset), 1)
+        
+        y_offset += 25
         
         # Low cloud
         label_low = font_label.render('LOW', True, RETRO_TEXT)
-        sidebar_surf.blit(label_low, (12, y_offset))
-        val_low = font_value.render(f'{low_cloud:.1f}%', True, (101, 216, 223))
-        sidebar_surf.blit(val_low, (140, y_offset))
+        sidebar_surf.blit(label_low, (20, y_offset))
+        val_low = font_value.render(f'{low_cloud:.1f}%', True, (140, 210, 230))
+        sidebar_surf.blit(val_low, (sidebar_w - val_low.get_width() - 20, y_offset))
         
         # Mini bar
         mini_bar_w = sidebar_w - 40
-        pygame.draw.rect(sidebar_surf, RETRO_DIM, (12, y_offset + 22, mini_bar_w, 8), 1)
+        pygame.draw.rect(sidebar_surf, RETRO_DIM, (20, y_offset + 28, mini_bar_w, 10), 1)
         fill_low = int(mini_bar_w * (low_cloud / 100.0))
         if fill_low > 0:
-            pygame.draw.rect(sidebar_surf, (101, 216, 223), (13, y_offset + 23, fill_low, 6))
+            pygame.draw.rect(sidebar_surf, (140, 210, 230), (21, y_offset + 29, fill_low, 8))
         
-        y_offset += 50
+        y_offset += 54
         
         # Mid cloud
         label_mid = font_label.render('MID', True, RETRO_TEXT)
-        sidebar_surf.blit(label_mid, (12, y_offset))
-        val_mid = font_value.render(f'{mid_cloud:.1f}%', True, RETRO_SECONDARY)
-        sidebar_surf.blit(val_mid, (140, y_offset))
+        sidebar_surf.blit(label_mid, (20, y_offset))
+        val_mid = font_value.render(f'{mid_cloud:.1f}%', True, (110, 180, 210))
+        sidebar_surf.blit(val_mid, (sidebar_w - val_mid.get_width() - 20, y_offset))
         
-        pygame.draw.rect(sidebar_surf, RETRO_DIM, (12, y_offset + 22, mini_bar_w, 8), 1)
+        pygame.draw.rect(sidebar_surf, RETRO_DIM, (20, y_offset + 28, mini_bar_w, 10), 1)
         fill_mid = int(mini_bar_w * (mid_cloud / 100.0))
         if fill_mid > 0:
-            pygame.draw.rect(sidebar_surf, RETRO_SECONDARY, (13, y_offset + 23, fill_mid, 6))
+            pygame.draw.rect(sidebar_surf, (110, 180, 210), (21, y_offset + 29, fill_mid, 8))
         
-        y_offset += 50
+        y_offset += 54
         
         # High cloud
         label_high = font_label.render('HIGH', True, RETRO_TEXT)
-        sidebar_surf.blit(label_high, (12, y_offset))
-        val_high = font_value.render(f'{high_cloud:.1f}%', True, RETRO_ACCENT)
-        sidebar_surf.blit(val_high, (140, y_offset))
+        sidebar_surf.blit(label_high, (20, y_offset))
+        val_high = font_value.render(f'{high_cloud:.1f}%', True, (100, 110, 200))
+        sidebar_surf.blit(val_high, (sidebar_w - val_high.get_width() - 20, y_offset))
         
-        pygame.draw.rect(sidebar_surf, RETRO_DIM, (12, y_offset + 22, mini_bar_w, 8), 1)
+        pygame.draw.rect(sidebar_surf, RETRO_DIM, (20, y_offset + 28, mini_bar_w, 10), 1)
         fill_high = int(mini_bar_w * (high_cloud / 100.0))
         if fill_high > 0:
-            pygame.draw.rect(sidebar_surf, RETRO_ACCENT, (13, y_offset + 23, fill_high, 6))
+            pygame.draw.rect(sidebar_surf, (100, 110, 200), (21, y_offset + 29, fill_high, 8))
         
         # Footer info
-        y_footer = screen_h - 80
+        y_footer = screen_h - 70
         pygame.draw.line(sidebar_surf, RETRO_BORDER, (0, y_footer - 10), (sidebar_w, y_footer - 10), 1)
         
         footer1 = font_small.render('SHENZHEN 22.5N 114.0E', True, RETRO_DIM)
-        sidebar_surf.blit(footer1, (12, y_footer))
+        sidebar_surf.blit(footer1, (20, y_footer + 5))
         
         footer2 = font_small.render(f'Opacity: {int(data_opacity*100)}%', True, RETRO_DIM)
-        sidebar_surf.blit(footer2, (12, y_footer + 18))
+        sidebar_surf.blit(footer2, (20, y_footer + 25))
         
         footer3 = font_small.render('[/] opacity ,. map ESC quit', True, RETRO_DIM)
         sidebar_surf.blit(footer3, (12, y_footer + 36))
         
         screen.blit(sidebar_surf, (0, 0))
+        
+        # Mouse hover info display (bottom-right corner of viz area)
+        mouse_pos = pygame.mouse.get_pos()
+        location_info = get_location_info(mouse_pos[0], mouse_pos[1])
+        
+        if location_info and mouse_pos[0] >= sidebar_w:
+            # Create semi-transparent info panel
+            info_w, info_h = 300, 70
+            info_x = screen_w - info_w - 15
+            info_y = screen_h - info_h - 15
+            
+            # Background panel
+            info_surf = pygame.Surface((info_w, info_h), pygame.SRCALPHA)
+            info_surf.fill((14, 47, 100, 220))  # Semi-transparent background
+            pygame.draw.rect(info_surf, RETRO_BORDER, (0, 0, info_w, info_h), 1)
+            
+            # Location name
+            name_surf = font_label.render(location_info['name'], True, RETRO_ACCENT)
+            info_surf.blit(name_surf, (10, 10))
+            
+            # Coordinates
+            lat_str = f"LAT: {location_info['lat']:.4f}N"
+            lon_str = f"LON: {location_info['lon']:.4f}E"
+            lat_surf = font_small.render(lat_str, True, RETRO_TEXT)
+            lon_surf = font_small.render(lon_str, True, RETRO_TEXT)
+            info_surf.blit(lat_surf, (10, 35))
+            info_surf.blit(lon_surf, (10, 52))
+            
+            # Blit info panel to screen
+            screen.blit(info_surf, (info_x, info_y))
 
         pygame.display.flip()
 
