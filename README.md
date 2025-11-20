@@ -8,7 +8,7 @@ The visualization displays real-time cloud coverage levels across three altitude
 
 ### Full Cloud Coverage (100% Total)
 ![Full Coverage](./images/preview_fully_coverage.png)
-High cloud coverage displays all three layers at maximum intensity, with dense cloud formations and vibrant blue-cyan coloring.
+Full cloud coverage complete overcast conditions with all three cloud altitude layers (Low, Mid, High) fully saturated, creating an opaque cloud canopy with smooth gradient shading across the entire visualization area.
 
 ### High Cloud Coverage (88% Total)
 ![High Coverage](./images/preview_high_coverage.png)
