@@ -2,6 +2,26 @@
 
 A retro-futuristic, Mac OS 3 inspired visualization of Shenzhen's cloud coverage with smooth, cyan-teal-amber dynamic contours rendered in Pygame. Features a classic CRT-style left sidebar panel displaying real-time data metrics with progress bars, and a main visualization area with deep charcoal backgrounds. The highest cloud amounts shift from cyan-teal toward warm amber tones.
 
+## Showcase
+
+The visualization displays real-time cloud coverage levels across three altitude bands (Low, Mid, High) with smooth gradient rendering:
+
+### Full Cloud Coverage (100% Total)
+![High Coverage](./images/preview_fully_coverage.png)
+High cloud coverage displays all three layers at maximum intensity, with dense cloud formations and vibrant blue-cyan coloring.
+
+### High Cloud Coverage (88% Total)
+![High Coverage](./images/preview_high_coverage.png)
+High cloud coverage displays all three layers at maximum intensity, with dense cloud formations and vibrant blue-cyan coloring.
+
+### Medium Cloud Coverage (55% Total)
+![Medium Coverage](./images/preview_medium_coverage.png)
+Medium coverage shows partial cloud formations with a mix of low and mid-altitude clouds, demonstrating the gradient rendering capabilities.
+
+### Low Cloud Coverage (32% Total)
+![Low Coverage](./images/preview_low_coverage.png)
+Low coverage shows minimal cloud formation primarily in the mid-altitude layer, with the Shenzhen basemap clearly visible underneath.
+
 ## What's inside
 
 - Pygame animation (`cloudCover_sz.py`)
