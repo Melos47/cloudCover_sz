@@ -7,7 +7,7 @@ A retro-futuristic, Mac OS 3 inspired visualization of Shenzhen's cloud coverage
 The visualization displays real-time cloud coverage levels across three altitude bands (Low, Mid, High) with smooth gradient rendering:
 
 ### Full Cloud Coverage (100% Total)
-![High Coverage](./images/preview_fully_coverage.png)
+![Full Coverage](./images/preview_fully_coverage.png)
 High cloud coverage displays all three layers at maximum intensity, with dense cloud formations and vibrant blue-cyan coloring.
 
 ### High Cloud Coverage (88% Total)
